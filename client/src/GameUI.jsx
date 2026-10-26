@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import * as E from "../../shared/engine.js";
+import { Building, Pawn, Die3D, Burst, Confetti, diffFx, FX_LABEL } from "./fx.jsx";
 const { TILES, GROUPS } = E;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -24,16 +25,6 @@ const Ico = {
   resort: () => (<svg viewBox="0 0 24 24"><path d="M2 15c2.5-2 5-2 7.5 0s5 2 7.5 0 3.5-1.5 5-1M2 19.5c2.5-2 5-2 7.5 0s5 2 7.5 0 3.5-1.5 5-1" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/><circle cx="16" cy="7" r="3" fill="currentColor"/></svg>),
 };
 
-// ---------------- dés ----------------
-const PIPS = { 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8] };
-function Die({ v, rolling }) {
-  return (
-    <div className={"die" + (rolling ? " rolling" : "")}>
-      {Array.from({ length: 9 }, (_, k) => <span key={k} className={PIPS[v] && PIPS[v].includes(k) ? "pip on" : "pip"} />)}
-    </div>
-  );
-}
-
 // ---------------- plateau ----------------
 function coord(i) {
   if (i <= 8) return { r: 8, c: 8 - i };
@@ -41,35 +32,40 @@ function coord(i) {
   if (i <= 24) return { r: 0, c: i - 16 };
   return { r: i - 24, c: 8 };
 }
-const LevelPips = ({ l }) => {
-  if (l >= 5) return <span className="lv mark">★</span>;
-  if (l === 4) return <span className="lv hotel">H</span>;
-  return <span className="lv">{"▮".repeat(l)}</span>;
-};
-
-function Tile({ s, i, onTap, selectable, dim, highlight }) {
+function Tile({ s, i, onTap, selectable, highlight, fx }) {
   const t = TILES[i];
   const { r, c } = coord(i);
   const prop = s.props[i];
   const owner = prop ? s.players[prop.o] : null;
   const corner = i % 8 === 0;
   const champ = s.champ && s.champ.tile === i;
-  let cls = "tile t-" + t.t + (corner ? " corner" : "") + (selectable ? " sel" : "") + (dim ? " dim" : "") + (highlight ? " hl" : "");
+  const cls = "tile t-" + t.t + (corner ? " corner" : "") + (selectable ? " sel" : "") + (highlight ? " hl" : "") +
+    (owner ? " owned" : "") + (champ ? " champ-on" : "") + (fx ? " fx-" + fx : "");
   const style = { gridRow: r + 1, gridColumn: c + 1 };
   if (owner) style["--own"] = owner.color;
   const I = Ico[t.t];
+  const bkind = !owner ? null : t.t === "resort" ? "resort" : prop.l >= 5 ? "mark" : prop.l === 4 ? "hotel" : prop.l >= 1 ? "houses" : "flag";
   return (
     <button className={cls} style={style} onClick={() => onTap(i)} aria-label={t.name}>
       {t.t === "city" ? <span className="strip" style={{ background: GROUPS[t.g].color }} /> : null}
-      {I ? <span className="ico"><I /></span> : null}
+      {I && !(owner && t.t === "resort") ? <span className="ico"><I /></span> : null}
       <span className="nm">{t.short}</span>
       {(t.t === "city" || t.t === "resort") && !owner ? <span className="pr">{t.price}</span> : null}
+      {owner ? <span className="ownbar" /> : null}
       {owner ? (
-        <span className="own">
-          {t.t === "city" ? <LevelPips l={prop.l} /> : <span className="lv">◆</span>}
+        <span className={"bld b-" + bkind}>
+          <span className="bld-in" key={(prop.l || 0) + "-" + prop.o}>
+            <Building type={t.t} level={prop.l} color={owner.color} />
+          </span>
         </span>
       ) : null}
       {champ ? <span className="champ">×{s.champ.mult}</span> : null}
+      {fx ? (
+        <span className="fxlayer" key={fx + (owner ? owner.color : "")}>
+          <Burst color={fx === "storm" ? "#cfe8ff" : fx === "sell" ? "#b9b2a3" : fx === "champ" ? "#ffd84a" : owner ? owner.color : "#f2a93b"} n={fx === "champ" ? 14 : 10} />
+          <span className="fxlabel">{FX_LABEL[fx]}</span>
+        </span>
+      ) : null}
     </button>
   );
 }
@@ -81,18 +77,21 @@ function Tokens({ s, disp }) {
     const pos = disp[k] == null ? p.pos : disp[k];
     (groups[pos] = groups[pos] || []).push(k);
   });
-  const OFF = [[-0.22, 0.05], [0.22, 0.05], [-0.22, 0.3], [0.22, 0.3]];
+  const OFF = [[-0.2, -0.05], [0.2, -0.05], [-0.2, 0.25], [0.2, 0.25]];
   return s.players.map((p, k) => {
     if (p.bankrupt) return null;
     const pos = disp[k] == null ? p.pos : disp[k];
     const { r, c } = coord(pos);
     const g = groups[pos];
     const idx = g.indexOf(k);
-    const off = g.length > 1 ? OFF[idx % 4] : [0, 0.2];
+    const off = g.length > 1 ? OFF[idx % 4] : [0, 0.15];
     return (
-      <span key={k} className={"token" + (k === s.turn ? " active" : "")}
-        style={{ left: `${((c + 0.5 + off[0]) / 9) * 100}%`, top: `${((r + 0.5 + off[1]) / 9) * 100}%`, background: p.color }}>
-        {p.pseudo.slice(0, 1).toUpperCase()}
+      <span key={k} className={"pawn-pos" + (k === s.turn && s.status === "playing" ? " active" : "")}
+        style={{ left: `${((c + 0.5 + off[0]) / 9) * 100}%`, top: `${((r + 0.5 + off[1]) / 9) * 100}%`, "--pc": p.color }}>
+        <span className="pawn-shadow" />
+        <span className="pawn-stand">
+          <span className="pawn-hop" key={pos}><Pawn color={p.color} /></span>
+        </span>
       </span>
     );
   });
@@ -104,6 +103,8 @@ function useAnimation(s) {
   const [busy, setBusy] = useState(false);
   const [rolling, setRolling] = useState(false);
   const [card, setCard] = useState(null);
+  const [fx, setFx] = useState(null);
+  const prevRef = useRef(s);
   const dispRef = useRef(disp);
   const seqRef = useRef(s.seq);
   const rollRef = useRef(s.rollSeq);
@@ -114,16 +115,20 @@ function useAnimation(s) {
     seqRef.current = s.seq;
     const newRoll = s.rollSeq !== rollRef.current;
     rollRef.current = s.rollSeq;
+    const before = prevRef.current;
+    prevRef.current = s;
+    const effects = s.seq === prev + 1 ? diffFx(before, s) : null;
     if (s.seq !== prev + 1 || reducedMotion) {
       setDisp(s.players.map((p) => p.pos));
       setBusy(false); setRolling(false);
       if (s.card && s.seq === prev + 1) setCard({ ...s.card, k: s.seq });
+      if (effects) setFx(effects);
       return;
     }
     let cancelled = false;
     (async () => {
       setBusy(true);
-      if (newRoll) { setRolling(true); await sleep(650); if (cancelled) return; setRolling(false); await sleep(120); }
+      if (newRoll) { setRolling(true); await sleep(1050); if (cancelled) return; setRolling(false); await sleep(150); }
       let d = dispRef.current.slice();
       for (const m of s.moves || []) {
         if (cancelled) return;
@@ -133,7 +138,7 @@ function useAnimation(s) {
           while (x !== m.to && guard++ < 40) {
             x = (x + 1) % E.BOARD_SIZE;
             d = d.slice(); d[m.p] = x; setDisp(d);
-            await sleep(150);
+            await sleep(200);
             if (cancelled) return;
           }
         } else if (m.kind === "back") {
@@ -142,23 +147,29 @@ function useAnimation(s) {
           while (x !== m.to && guard++ < 40) {
             x = (x + E.BOARD_SIZE - 1) % E.BOARD_SIZE;
             d = d.slice(); d[m.p] = x; setDisp(d);
-            await sleep(170);
+            await sleep(210);
             if (cancelled) return;
           }
         } else {
-          await sleep(180);
+          await sleep(200);
           d = d.slice(); d[m.p] = m.to; setDisp(d);
-          await sleep(380);
+          await sleep(500);
         }
       }
       if (cancelled) return;
       setDisp(s.players.map((p) => p.pos));
+      if (effects) { setFx(effects); await sleep(effects && Object.keys(effects.tiles).length ? 650 : 0); if (cancelled) return; }
       if (s.card) setCard({ ...s.card, k: s.seq });
       setBusy(false);
     })();
     return () => { cancelled = true; setBusy(false); setRolling(false); };
   }, [s.seq]);
-  return { disp, busy, rolling, card, closeCard: () => setCard(null) };
+  useEffect(() => {
+    if (!fx) return;
+    const id = setTimeout(() => setFx(null), 1900);
+    return () => clearTimeout(id);
+  }, [fx && fx.k]);
+  return { disp, busy, rolling, card, fx, closeCard: () => setCard(null) };
 }
 
 // ---------------- feuilles d'action ----------------
@@ -241,7 +252,7 @@ function ActionSheet({ s, dispatch }) {
               const cost = E.invested(i, l);
               return (
                 <button key={l} className="choice" disabled={cost > p.cash} onClick={() => dispatch({ type: "buy", level: l })}>
-                  <span>{t.t === "resort" ? "Station" : l === 0 ? "Terrain seul" : `Terrain + ${E.LEVEL_NAMES[l]}`}</span>
+                  <span><i className="prev"><Building type={t.t} level={l} color={p.color} /></i>{t.t === "resort" ? "Station" : l === 0 ? "Terrain seul" : `Terrain + ${E.LEVEL_NAMES[l]}`}</span>
                   <b>{fmt(cost)}</b>
                   {t.t === "city" ? <small>loyer {fmt(t.rents[l])}</small> : <small>loyer {fmt(E.RESORT_RENT[E.resortCount(s, s.turn) + 1])}</small>}
                 </button>
@@ -263,7 +274,7 @@ function ActionSheet({ s, dispatch }) {
               const cost = E.invested(i, l) - E.invested(i, prop.l);
               return (
                 <button key={l} className="choice" disabled={cost > p.cash} onClick={() => dispatch({ type: "build", level: l })}>
-                  <span>{E.LEVEL_NAMES[l]}</span><b>{fmt(cost)}</b><small>loyer {fmt(t.rents[l])}</small>
+                  <span><i className="prev"><Building type="city" level={l} color={p.color} /></i>{E.LEVEL_NAMES[l]}</span><b>{fmt(cost)}</b><small>loyer {fmt(t.rents[l])}</small>
                 </button>
               );
             })}
@@ -281,7 +292,7 @@ function ActionSheet({ s, dispatch }) {
           <p className="note">Le rachat coûte le double de la valeur investie. Il va directement dans la poche de {s.players[prop.o].pseudo}.</p>
           <p className="cashline">Ton argent : <b>{fmt(p.cash)}</b></p>
           <div className="choices">
-            <button className="choice primary" onClick={() => dispatch({ type: "buyback" })}><span>Racheter la {t.t === "city" ? "ville" : "station"}</span><b>{fmt(price)}</b></button>
+            <button className="choice primary" onClick={() => dispatch({ type: "buyback" })}><span><i className="prev"><Building type={t.t} level={prop.l} color={p.color} /></i>Racheter la {t.t === "city" ? "ville" : "station"}</span><b>{fmt(price)}</b></button>
           </div>
           <button className="ghost" onClick={() => dispatch({ type: "pass" })}>Non merci</button>
         </Sheet>
@@ -359,7 +370,9 @@ function phaseText(s) {
 
 // ---------------- écran de jeu ----------------
 export function GameScreen({ s, me, local, dispatch, onExit, title }) {
-  const { disp, busy, rolling, card, closeCard } = useAnimation(s);
+  const { disp, busy, rolling, card, fx, closeCard } = useAnimation(s);
+  const [threeD, setThreeD] = useState(() => store.get("tdn-3d") !== false);
+  const toggle3D = () => { const v = !threeD; setThreeD(v); store.set("tdn-3d", v); };
   const [tileInfo, setTileInfo] = useState(null);
   const [travelTo, setTravelTo] = useState(null);
   const [menu, setMenu] = useState(false);
@@ -383,7 +396,7 @@ export function GameScreen({ s, me, local, dispatch, onExit, title }) {
   const ranking = s.players.map((p, k) => ({ p, k, w: E.netWorth(s, k) }));
 
   return (
-    <div className="game">
+    <div className={"game" + (canAct && (s.phase === "roll" || travelMode) ? " has-bar" : "")}>
       <header className="gbar">
         <button className="iconbtn" onClick={onExit} aria-label="Retour">‹</button>
         <div className="gtitle">
@@ -399,58 +412,59 @@ export function GameScreen({ s, me, local, dispatch, onExit, title }) {
             <span className="dot">{p.pseudo.slice(0, 1).toUpperCase()}</span>
             <span className="pn">{p.pseudo}{!local && k === me ? " (toi)" : ""}</span>
             <span className="pc">{p.bankrupt ? "faillite" : fmt(p.cash)}</span>
+            {fx && fx.cash[k] ? <span key={fx.k} className={"floater " + (fx.cash[k] > 0 ? "up" : "down")}>{fx.cash[k] > 0 ? "+" : "−"}{Math.abs(fx.cash[k])}</span> : null}
           </div>
         ))}
       </div>
 
-      <div className="board-wrap">
+      <div className={"board-wrap" + (threeD ? " is3d" : "")}>
         <div className={"board" + (travelMode ? " travel" : "")}>
           {TILES.map((t, i) => (
             <Tile key={i} s={s} i={i} onTap={onTap} selectable={travelMode && i !== 24}
-              highlight={canAct && s.pending && s.pending.tile === i} />
+              highlight={canAct && s.pending && s.pending.tile === i} fx={fx && fx.tiles[i]} />
           ))}
           <div className="center">
             <div className="brand">Tour de<br /><span>Normandie</span></div>
             <div className="whose" style={{ "--pc": cur.color }}>
               {s.status === "ended" ? <span>Partie terminée</span> : <><i className="dot" />{myTurn && !local ? "À toi de jouer" : `Au tour de ${cur.pseudo}`}</>}
             </div>
-            <div className="dice"><Die v={dice[0]} rolling={rolling} /><Die v={dice[1]} rolling={rolling} /></div>
-            {s.status === "playing" ? (
-              canAct && s.phase === "roll" ? (
-                cur.jail > 0 ? (
-                  <div className="jailbtns">
-                    <button className="roll" onClick={() => dispatch({ type: "roll" })}>Tenter un double</button>
-                    <div className="row2">
-                      <button className="mini" disabled={cur.cash < E.JAIL_FINE} onClick={() => dispatch({ type: "jailPay" })}>Payer {E.JAIL_FINE} k</button>
-                      <button className="mini" disabled={!cur.escape} onClick={() => dispatch({ type: "jailCard" })}>Évasion ({cur.escape})</button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <button className="roll" onClick={() => dispatch({ type: "roll", mode })}>Lancer les dés</button>
-                    <div className="dctl" role="radiogroup" aria-label="Contrôle des dés">
-                      {[["free", "Libre"], ["low", "2–6"], ["mid", "6–8"], ["high", "8–12"]].map(([k, l]) => (
-                        <button key={k} role="radio" aria-checked={mode === k} className={mode === k ? "on" : ""} onClick={() => setMode(k)}>{l}</button>
-                      ))}
-                    </div>
-                  </>
-                )
-              ) : travelMode ? (
-                <div className="travelhint">
-                  <p>Touche une case pour t'y envoler</p>
-                  <button className="mini" onClick={() => dispatch({ type: "stay" })}>Rester et lancer</button>
-                </div>
-              ) : (
-                <p className="status">{busy ? "…" : phaseText(s)}</p>
-              )
-            ) : (
-              <p className="status">{s.players[s.winner].pseudo} gagne</p>
-            )}
+            <div className="dice"><Die3D v={dice[0]} seq={s.rollSeq} which={0} /><Die3D v={dice[1]} seq={s.rollSeq} which={1} /></div>
+            <p className="status">{s.status === "ended" ? `${s.players[s.winner].pseudo} gagne` : rolling ? "Les dés roulent…" : busy ? "\u00a0" : canAct ? (s.phase === "roll" ? (cur.jail > 0 ? "Tu es sur l'île" : "Lance les dés !") : s.phase === "travel" ? "Choisis ta destination" : "À toi de choisir") : phaseText(s)}</p>
             <p className="lastlog">{s.log[0] ? s.log[0].m : ""}</p>
           </div>
           <div className="tokens"><Tokens s={s} disp={disp} /></div>
         </div>
       </div>
+
+      {canAct && (s.phase === "roll" || travelMode) ? (
+        <div className="actbar">
+          {s.phase === "roll" ? (
+            cur.jail > 0 ? (
+              <div className="jailbtns">
+                <button className="roll" onClick={() => dispatch({ type: "roll" })}>Tenter un double</button>
+                <div className="row2">
+                  <button className="mini" disabled={cur.cash < E.JAIL_FINE} onClick={() => dispatch({ type: "jailPay" })}>Payer {E.JAIL_FINE} k</button>
+                  <button className="mini" disabled={!cur.escape} onClick={() => dispatch({ type: "jailCard" })}>Évasion ({cur.escape})</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="dctl" role="radiogroup" aria-label="Contrôle des dés">
+                  {[["free", "Libre"], ["low", "2–6"], ["mid", "6–8"], ["high", "8–12"]].map(([k, l]) => (
+                    <button key={k} role="radio" aria-checked={mode === k} className={mode === k ? "on" : ""} onClick={() => setMode(k)}>{l}</button>
+                  ))}
+                </div>
+                <button className="roll big" onClick={() => dispatch({ type: "roll", mode })}>{local ? `${cur.pseudo}, lance !` : "Lancer les dés"}</button>
+              </>
+            )
+          ) : (
+            <div className="travelhint">
+              <p>Touche une case du plateau pour t'y envoler</p>
+              <button className="mini" onClick={() => dispatch({ type: "stay" })}>Rester et lancer</button>
+            </div>
+          )}
+        </div>
+      ) : null}
 
       {afk ? (
         <div className="afk">
@@ -533,6 +547,7 @@ export function GameScreen({ s, me, local, dispatch, onExit, title }) {
 
       {s.status === "ended" && !busy ? (
         <div className="winner">
+          <Confetti colors={[...s.players.map((p) => p.color), "#f2a93b", "#e9eeea"]} />
           <div className="wcard" style={{ "--pc": s.players[s.winner].color }}>
             <small>Victoire</small>
             <h2>{s.players[s.winner].pseudo}</h2>
@@ -549,6 +564,7 @@ export function GameScreen({ s, me, local, dispatch, onExit, title }) {
         <Sheet title="Menu de la partie" onClose={() => { setMenu(false); setConfirmResign(false); }}>
           <div className="choices">
             <button className="choice" onClick={() => { setMenu(false); onExit(); }}><span>Revenir à l'accueil</span><small>la partie continue</small></button>
+            <button className="choice" onClick={toggle3D}><span>Plateau en {threeD ? "2D" : "3D"}</span><small>{threeD ? "vue à plat, plus lisible" : "vue inclinée avec bâtiments en relief"}</small></button>
             {s.status === "playing" && (local || (me != null && !s.players[me].bankrupt)) ? (
               confirmResign ? (
                 <button className="choice dangerc" onClick={() => { setMenu(false); setConfirmResign(false); dispatch({ type: "resign" }); }}>

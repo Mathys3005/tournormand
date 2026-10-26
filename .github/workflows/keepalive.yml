@@ -1,0 +1,13 @@
+# Filet de sécurité : ping le service Render toutes les 10 minutes pour qu'il ne s'endorme pas.
+# Renseigne l'URL du service dans Settings > Secrets and variables > Actions > Variables : RENDER_URL
+name: keepalive
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    if: ${{ vars.RENDER_URL != '' }}
+    steps:
+      - run: curl -fsS --max-time 60 --retry 3 --retry-delay 10 "${{ vars.RENDER_URL }}/healthz"
