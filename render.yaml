@@ -1,0 +1,19 @@
+# Blueprint Render : https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: tournormand
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: DATABASE_URL
+        sync: false # à coller depuis Neon au moment de la création
+      - key: ADMIN_PSEUDOS
+        value: mathys27
+      - key: WHITELIST
+        value: nanolepa,mathys27,pierre27
